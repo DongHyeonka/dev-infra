@@ -2,17 +2,22 @@ version: '3.8'
 
 services:
   account-service-postgres:
-    image: postgres:latest
+    image: eventuateio/eventuate-tram-sagas-postgres:${EVENTUATE_COMMON_VERSION}
     container_name: account-service-postgres
     restart: always
     ports:
       - 5434:5432
     environment:
-      POSTGRES_USER: donghyeon
-      POSTGRES_PASSWORD: adzc1973
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: account-service
+      USE_DB_ID: "true"
+    command: 
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U donghyeon -d account-service"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d account-service"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,17 +28,22 @@ services:
       - dev-infra-network
       
   payment-service-postgres:
-    image: postgres:latest
+    image: eventuateio/eventuate-tram-sagas-postgres:${EVENTUATE_COMMON_VERSION}
     container_name: payment-service-postgres
     restart: always
     ports:
       - 5435:5432
     environment:
-      POSTGRES_USER: donghyeon
-      POSTGRES_PASSWORD: adzc1973
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: payment-service
+      USE_DB_ID: "true"
+    command: 
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U donghyeon -d payment-service"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d payment-service"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,17 +54,22 @@ services:
       - dev-infra-network
   
   chat-service-postgres:
-    image: postgres:latest
+    image: eventuateio/eventuate-tram-sagas-postgres:${EVENTUATE_COMMON_VERSION}
     container_name: chat-service-postgres
     restart: always
     ports:
       - 5436:5432
     environment:
-      POSTGRES_USER: donghyeon
-      POSTGRES_PASSWORD: adzc1973
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: chat-service
+      USE_DB_ID: "true"
+    command: 
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U donghyeon -d chat-service"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d chat-service"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -80,6 +95,109 @@ services:
     command: ["http", "localhost:1002"]
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+  
+  zookeeper:
+    image: eventuateio/eventuate-zookeeper:${EVENTUATE_COMMON_VERSION}
+    container_name: zookeeper
+    restart: always
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - dev-infra-network
+  
+  kafka:
+    image: eventuateio/eventuate-kafka:${EVENTUATE_MESSAGING_KAFKA_IMAGE_VERSION}
+    container_name: kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECTION_TIMEOUT_MS: 60000
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_BROKER_ID: 1
+    networks:
+      - dev-infra-network
+  
+  eventuate-cdc-service:
+    image: eventuateio/eventuate-cdc-service:${EVENTUATE_CDC_VERSION}
+    ports:
+      - "8099:8080"
+    restart: always
+    depends_on:
+      - account-service-postgres
+      - kafka
+      - zookeeper
+    environment:
+      EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
+
+      EVENTUATE_CDC_READER_READER1_TYPE: postgres-wal
+      EVENTUATE_CDC_READER_READER1_DATASOURCEURL: jdbc:postgresql://account-service-postgres:5432/eventuate
+
+      EVENTUATE_CDC_READER_READER1_MONITORINGSCHEMA: eventuate
+      EVENTUATE_CDC_READER_READER1_DATASOURCEUSERNAME: ${POSTGRES_USER}
+      EVENTUATE_CDC_READER_READER1_DATASOURCEPASSWORD: ${POSTGRES_PASSWORD}
+      EVENTUATE_CDC_READER_READER1_DATASOURCEDRIVERCLASSNAME: org.postgresql.Driver
+      EVENTUATE_CDC_READER_READER1_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/account_service
+      EVENTUATE_CDC_READER_READER1_OFFSETSTORAGETOPICNAME: db.history.account_service
+      EVENTUATE_CDC_READER_READER1_OUTBOXID: 1
+
+      EVENTUATE_CDC_READER_READER2_TYPE: postgres-wal
+      EVENTUATE_CDC_READER_READER2_DATASOURCEURL: jdbc:postgresql://payment-service-postgres:5432/eventuate
+      EVENTUATE_CDC_READER_READER2_MONITORINGSCHEMA: eventuate
+      EVENTUATE_CDC_READER_READER2_DATASOURCEUSERNAME: ${POSTGRES_USER}
+      EVENTUATE_CDC_READER_READER2_DATASOURCEPASSWORD: ${POSTGRES_PASSWORD}
+      EVENTUATE_CDC_READER_READER2_DATASOURCEDRIVERCLASSNAME: org.postgresql.Driver
+      EVENTUATE_CDC_READER_READER2_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/payment_service
+      EVENTUATE_CDC_READER_READER2_OFFSETSTORAGETOPICNAME: db.history.payment_service
+      EVENTUATE_CDC_READER_READER2_OUTBOXID: 2
+
+      EVENTUATE_CDC_READER_READER3_TYPE: postgres-wal
+      EVENTUATE_CDC_READER_READER3_DATASOURCEURL: jdbc:postgresql://chat-service-postgres:5432/eventuate
+      EVENTUATE_CDC_READER_READER3_MONITORINGSCHEMA: eventuate
+      EVENTUATE_CDC_READER_READER3_DATASOURCEUSERNAME: ${POSTGRES_USER}
+      EVENTUATE_CDC_READER_READER3_DATASOURCEPASSWORD: ${POSTGRES_PASSWORD}
+      EVENTUATE_CDC_READER_READER3_DATASOURCEDRIVERCLASSNAME: org.postgresql.Driver
+      EVENTUATE_CDC_READER_READER3_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/chat_service
+      EVENTUATE_CDC_READER_READER3_OFFSETSTORAGETOPICNAME: db.history.chat_service
+      EVENTUATE_CDC_READER_READER3_OUTBOXID: 3
+
+      EVENTUATE_CDC_PIPELINE_PIPELINE1_TYPE: eventuate-tram
+      EVENTUATE_CDC_PIPELINE_PIPELINE1_READER: reader1
+      EVENTUATE_CDC_PIPELINE_PIPELINE1_EVENTUATEDATABASESCHEMA: eventuate
+
+      EVENTUATE_CDC_PIPELINE_PIPELINE2_TYPE: eventuate-tram
+      EVENTUATE_CDC_PIPELINE_PIPELINE2_READER: reader2
+      EVENTUATE_CDC_PIPELINE_PIPELINE2_EVENTUATEDATABASESCHEMA: eventuate
+
+      EVENTUATE_CDC_PIPELINE_PIPELINE3_TYPE: eventuate-tram
+      EVENTUATE_CDC_PIPELINE_PIPELINE3_READER: reader3
+      EVENTUATE_CDC_PIPELINE_PIPELINE3_EVENTUATEDATABASESCHEMA: eventuate
+
+      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_NAME: eventuate_slot
+      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_DROP_ON_STOP: "false"
+      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_CREATE: "true"
+      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_INITIAL_CREATE: "true"
+      
+      EVENTUATE_CDC_TYPE: EventuateTram
+      LOGGING_LEVEL_IO_EVENTUATE: DEBUG
+      LOGGING_LEVEL_IO_EVENTUATE_CDC: DEBUG
+
+    networks:
+      - dev-infra-network
 
 volumes:
   account-service-postgres-data:
