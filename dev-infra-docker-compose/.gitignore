@@ -1,1 +1,4 @@
 .env
+**/__pycache__/*
+**/config/query_log_file.log
+**/prometheus/*

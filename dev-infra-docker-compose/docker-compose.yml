@@ -198,11 +198,56 @@ services:
 
     networks:
       - dev-infra-network
+  
+  master:
+    image: locustio/locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./:/mnt/locust
+    command: -f /mnt/locust/locustfile-account-service-sign-up-V1.py --master -H http://host.docker.internal:1001
+    networks:
+      - dev-infra-network
+
+  worker:
+    image: locustio/locust
+    volumes:
+      - ./:/mnt/locust
+    command: -f /mnt/locust/locustfile-account-service-sign-up-V1.py --worker --master-host master
+    networks:
+      - dev-infra-network
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config:/etc/prometheus
+      - ./prometheus/volume:/prometheus
+    command:
+      - '--web.enable-lifecycle'
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    networks:
+      - dev-infra-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - dev-infra-network
+    depends_on:
+      - prometheus
 
 volumes:
   account-service-postgres-data:
   payment-service-postgres-data:
   chat-service-postgres-data:
+  grafana-data:
 
 networks:
   dev-infra-network:
