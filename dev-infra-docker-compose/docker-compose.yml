@@ -24,6 +24,7 @@ services:
       start_period: 30s
     volumes:
       - account-service-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init/init-replication-user.sh:/docker-entrypoint-initdb.d/init-replication-user.sh
     networks:
       - dev-infra-network
       
@@ -50,6 +51,7 @@ services:
       start_period: 30s
     volumes:
       - payment-service-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init/init-replication-user.sh:/docker-entrypoint-initdb.d/init-replication-user.sh
     networks:
       - dev-infra-network
   
@@ -76,6 +78,7 @@ services:
       start_period: 30s
     volumes:
       - chat-service-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init/init-replication-user.sh:/docker-entrypoint-initdb.d/init-replication-user.sh
     networks:
       - dev-infra-network
 
@@ -137,15 +140,22 @@ services:
       - "8099:8080"
     restart: always
     depends_on:
-      - account-service-postgres
-      - kafka
-      - zookeeper
+      account-service-postgres:
+        condition: service_healthy
+      payment-service-postgres:
+        condition: service_healthy
+      chat-service-postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      zookeeper:
+        condition: service_started
     environment:
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
 
       EVENTUATE_CDC_READER_READER1_TYPE: postgres-wal
-      EVENTUATE_CDC_READER_READER1_DATASOURCEURL: jdbc:postgresql://account-service-postgres:5432/eventuate
+      EVENTUATE_CDC_READER_READER1_DATASOURCEURL: jdbc:postgresql://account-service-postgres:5432/account-service
 
       EVENTUATE_CDC_READER_READER1_MONITORINGSCHEMA: eventuate
       EVENTUATE_CDC_READER_READER1_DATASOURCEUSERNAME: ${POSTGRES_USER}
@@ -154,9 +164,10 @@ services:
       EVENTUATE_CDC_READER_READER1_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/account_service
       EVENTUATE_CDC_READER_READER1_OFFSETSTORAGETOPICNAME: db.history.account_service
       EVENTUATE_CDC_READER_READER1_OUTBOXID: 1
+      EVENTUATE_CDC_READER_READER1_POSTGRESREPLICATIONSLOTNAME: eventuate_slot_account_service
 
       EVENTUATE_CDC_READER_READER2_TYPE: postgres-wal
-      EVENTUATE_CDC_READER_READER2_DATASOURCEURL: jdbc:postgresql://payment-service-postgres:5432/eventuate
+      EVENTUATE_CDC_READER_READER2_DATASOURCEURL: jdbc:postgresql://payment-service-postgres:5432/payment-service
       EVENTUATE_CDC_READER_READER2_MONITORINGSCHEMA: eventuate
       EVENTUATE_CDC_READER_READER2_DATASOURCEUSERNAME: ${POSTGRES_USER}
       EVENTUATE_CDC_READER_READER2_DATASOURCEPASSWORD: ${POSTGRES_PASSWORD}
@@ -164,9 +175,10 @@ services:
       EVENTUATE_CDC_READER_READER2_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/payment_service
       EVENTUATE_CDC_READER_READER2_OFFSETSTORAGETOPICNAME: db.history.payment_service
       EVENTUATE_CDC_READER_READER2_OUTBOXID: 2
+      EVENTUATE_CDC_READER_READER2_POSTGRESREPLICATIONSLOTNAME: eventuate_slot_payment_service
 
       EVENTUATE_CDC_READER_READER3_TYPE: postgres-wal
-      EVENTUATE_CDC_READER_READER3_DATASOURCEURL: jdbc:postgresql://chat-service-postgres:5432/eventuate
+      EVENTUATE_CDC_READER_READER3_DATASOURCEURL: jdbc:postgresql://chat-service-postgres:5432/chat-service
       EVENTUATE_CDC_READER_READER3_MONITORINGSCHEMA: eventuate
       EVENTUATE_CDC_READER_READER3_DATASOURCEUSERNAME: ${POSTGRES_USER}
       EVENTUATE_CDC_READER_READER3_DATASOURCEPASSWORD: ${POSTGRES_PASSWORD}
@@ -174,6 +186,7 @@ services:
       EVENTUATE_CDC_READER_READER3_LEADERSHIPLOCKPATH: /eventuate/cdc/leader/chat_service
       EVENTUATE_CDC_READER_READER3_OFFSETSTORAGETOPICNAME: db.history.chat_service
       EVENTUATE_CDC_READER_READER3_OUTBOXID: 3
+      EVENTUATE_CDC_READER_READER3_POSTGRESREPLICATIONSLOTNAME: eventuate_slot_chat_service
 
       EVENTUATE_CDC_PIPELINE_PIPELINE1_TYPE: eventuate-tram
       EVENTUATE_CDC_PIPELINE_PIPELINE1_READER: reader1
@@ -187,10 +200,7 @@ services:
       EVENTUATE_CDC_PIPELINE_PIPELINE3_READER: reader3
       EVENTUATE_CDC_PIPELINE_PIPELINE3_EVENTUATEDATABASESCHEMA: eventuate
 
-      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_NAME: eventuate_slot
       EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_DROP_ON_STOP: "false"
-      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_CREATE: "true"
-      EVENTUATE_CDC_POSTGRES_REPLICATION_SLOT_INITIAL_CREATE: "true"
       
       EVENTUATE_CDC_TYPE: EventuateTram
       LOGGING_LEVEL_IO_EVENTUATE: DEBUG
@@ -205,7 +215,7 @@ services:
       - "8089:8089"
     volumes:
       - ./:/mnt/locust
-    command: -f /mnt/locust/locustfile-account-service-sign-up-V1.py --master -H http://host.docker.internal:1001
+    command: -f /mnt/locust/locustfile-account-service-login.py --master -H http://host.docker.internal:1001
     networks:
       - dev-infra-network
 
@@ -213,7 +223,7 @@ services:
     image: locustio/locust
     volumes:
       - ./:/mnt/locust
-    command: -f /mnt/locust/locustfile-account-service-sign-up-V1.py --worker --master-host master
+    command: -f /mnt/locust/locustfile-account-service-login.py --worker --master-host master
     networks:
       - dev-infra-network
   
@@ -242,6 +252,16 @@ services:
       - dev-infra-network
     depends_on:
       - prometheus
+  
+  redis:
+    container_name: redis
+    image: redis:7.2-alpine
+    command: redis-server --port 6379
+    labels:
+      - "name=redis"
+      - "mode=standalone"
+    ports:
+      - 6379:6379
 
 volumes:
   account-service-postgres-data:
